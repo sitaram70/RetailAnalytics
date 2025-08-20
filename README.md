@@ -117,4 +117,5 @@ Train the LR model; otherwise the fallback is mean-7. (See MODEL_CARD for detail
 ---
 
 ## License
-Pick one (e.g., MIT) and add a `LICENSE` file if you plan to share publicly.
+MIT © 2025 Sitaram Ayyagari. See [LICENSE](./LICENSE) for details.
+
