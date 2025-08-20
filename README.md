@@ -1,3 +1,5 @@
+[![CI](https://github.com/sitaram70/RetailAnalytics/actions/workflows/ci.yml/badge.svg)](https://github.com/sitaram70/RetailAnalytics/actions/workflows/ci.yml)
+
 # AI-Driven Retail Analytics Dashboard (CPU-only)
 
 Streamlit + FastAPI application for retail KPIs, customer segmentation (RFM), basket analysis (frequently bought together), anomaly detection, and simple forecasting. Designed to run on laptops with **CPU only**.
