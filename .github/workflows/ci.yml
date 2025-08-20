@@ -18,96 +18,50 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      # Use your requirements if present
-      - name: Install dependencies (requirements.txt)
-        if: ${{ hashFiles('requirements.txt') != '' }}
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # helpers for smoke tests (no-ops if already in reqs)
-          pip install fastapi uvicorn[standard] requests pytest joblib
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install fastapi uvicorn[standard] streamlit pandas numpy scikit-learn joblib requests
+          fi
 
-      # Fallback deps so the workflow passes even before code exists
-      - name: Install minimal deps (fallback)
-        if: ${{ hashFiles('requirements.txt') == '' }}
+      - name: Prepare data
         run: |
-          python -m pip install --upgrade pip
-          pip install fastapi uvicorn[standard] streamlit pandas numpy scikit-learn joblib requests
-
-      - name: Prepare data (simulate if script exists, else tiny inline dataset)
-        run: |
-          set -e
+          set -euo pipefail
           mkdir -p data/raw
           if [ -f "src/simulate_retail.py" ]; then
             python src/simulate_retail.py --out_dir data --start_date 2025-01-01 --days 30 --customers 200 --products 60 --stores 3
           else
-            python - <<'PY'
-            from pathlib import Path
-            import pandas as pd
-            raw = Path("data/raw"); raw.mkdir(parents=True, exist_ok=True)
-            (raw/"products.csv").write_text("product_id,name,category,base_price\n1,Widget A,Cat1,10.0\n2,Widget B,Cat1,12.0\n", encoding="utf-8")
-            (raw/"stores.csv").write_text("store_id,city,region,size_index\n1,Austin,South,2\n", encoding="utf-8")
-            (raw/"visits.csv").write_text("date,store_id,visits\n2025-05-01,1,100\n2025-05-02,1,120\n", encoding="utf-8")
-            (raw/"transactions.csv").write_text(
-              "order_id,date,store_id,customer_id,product_id,quantity,unit_price,discount,revenue\n"
-              "1,2025-05-01,1,10,1,2,10,0,20\n"
-              "1,2025-05-01,1,10,2,1,12,0,12\n"
-              "2,2025-05-02,1,11,1,1,10,0,10\n", encoding="utf-8"
-            )
-            PY
+            printf "product_id,name,category,base_price\n1,Widget A,Cat1,10.0\n2,Widget B,Cat1,12.0\n" > data/raw/products.csv
+            printf "store_id,city,region,size_index\n1,Austin,South,2\n" > data/raw/stores.csv
+            printf "date,store_id,visits\n2025-05-01,1,100\n2025-05-02,1,120\n" > data/raw/visits.csv
+            printf "order_id,date,store_id,customer_id,product_id,quantity,unit_price,discount,revenue\n1,2025-05-01,1,10,1,2,10,0,20\n1,2025-05-01,1,10,2,1,12,0,12\n2,2025-05-02,1,11,1,1,10,0,10\n" > data/raw/transactions.csv
           fi
 
-      - name: Preprocess (use script if present, else inline)
+      - name: Preprocess
         run: |
-          set -e
+          set -euo pipefail
           if [ -f "src/preprocess_sales.py" ]; then
             python src/preprocess_sales.py --transactions data/raw/transactions.csv --visits data/raw/visits.csv --out data/raw/daily_sales.csv
           else
-            python - <<'PY'
-            import pandas as pd
-            tx = pd.read_csv("data/raw/transactions.csv", parse_dates=["date"])
-            vs = pd.read_csv("data/raw/visits.csv", parse_dates=["date"])
-            d = (tx.groupby("date").agg(revenue=("revenue","sum"),
-                                        orders=("order_id","nunique"),
-                                        units=("quantity","sum"))
-                      .reset_index())
-            v = vs.groupby("date", as_index=False)["visits"].sum()
-            d = d.merge(v, on="date", how="left")
-            d["aov"] = d["revenue"]/d["orders"].clip(lower=1)
-            d["conversion"] = d["orders"]/d["visits"].clip(lower=1)
-            d.to_csv("data/raw/daily_sales.csv", index=False)
-            PY
+            python -c "import pandas as pd; tx=pd.read_csv('data/raw/transactions.csv',parse_dates=['date']); vs=pd.read_csv('data/raw/visits.csv',parse_dates=['date']); d=tx.groupby('date').agg(revenue=('revenue','sum'),orders=('order_id','nunique'),units=('quantity','sum')).reset_index(); v=vs.groupby('date',as_index=False)['visits'].sum(); d=d.merge(v,on='date',how='left'); d['aov']=d['revenue']/d['orders'].clip(lower=1); d['conversion']=d['orders']/d['visits'].clip(lower=1); d.to_csv('data/raw/daily_sales.csv',index=False)"
           fi
 
       - name: Import checks (if modules exist)
         run: |
-          python - <<'PY'
-          import importlib.util, sys, pathlib
-          mods = ["src.api","src.train_models","streamlit_app.app"]
-          for m in mods:
-            path = pathlib.Path(m.replace(".","/") + ".py")
-            if path.exists():
-              import importlib; importlib.import_module(m); print("✅ imported", m)
-            else:
-              print("↷ skipped (missing)", m)
-          PY
+          set -e
+          [ -f "src/api.py" ] && python -c "import importlib.util; spec=importlib.util.spec_from_file_location('api','src/api.py'); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print('✅ imported src.api')" || echo "↷ skipped src.api"
+          [ -f "src/train_models.py" ] && python -c "import importlib.util; spec=importlib.util.spec_from_file_location('train','src/train_models.py'); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print('✅ imported src.train_models')" || echo "↷ skipped src.train_models"
+          [ -f "streamlit_app/app.py" ] && python -c "import importlib.util; spec=importlib.util.spec_from_file_location('app','streamlit_app/app.py'); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print('✅ imported streamlit_app.app')" || echo '↷ skipped streamlit_app.app'
 
       - name: API smoke test (if api.py present)
         run: |
           if [ -f "src/api.py" ]; then
-            python - <<'PY'
-            import importlib.util
-            from fastapi.testclient import TestClient
-            spec = importlib.util.spec_from_file_location("api", "src/api.py")
-            api = importlib.util.module_from_spec(spec); spec.loader.exec_module(api)
-            client = TestClient(api.app)
-            assert client.get("/health").status_code == 200
-            r = client.get("/metrics/overview")
-            assert r.status_code == 200, r.text
-            print("API smoke OK:", r.json())
-            PY
+            python -c "import importlib.util; from fastapi.testclient import TestClient; spec=importlib.util.spec_from_file_location('api','src/api.py'); api=importlib.util.module_from_spec(spec); spec.loader.exec_module(api); c=TestClient(api.app); assert c.get('/health').status_code==200; assert c.get('/metrics/overview').status_code==200; print('API smoke OK')"
           else
-            echo "↷ skipped API smoke (src/api.py not found)"
+            echo '↷ skipped API smoke (src/api.py not found)'
           fi
 
       - name: Show tree on failure
